@@ -1,0 +1,93 @@
+def jenkins_url  = JENKINS_URL.replaceFirst(/\/$/, "")
+def params = [
+    string(name: 'SelectBranch', value: "${SelectBranch}"),
+    string(name: 'VERSION', value: "${VERSION}"),
+    string(name: 'BuildType', value: "${BuildType}")
+]
+
+def getChangeSetMessage() {
+    def changeMsgs = []
+    currentBuild.changeSets.collect { it.items }.flatten().each { entry ->
+        def author = entry.author.toString()
+        changeMsgs << "・${entry.msg} by ${author}"
+    }
+    return changeMsgs.size() > 0 ? changeMsgs.join("\n") : "No Messages"
+}
+
+pipeline {
+    agent any
+    stages {
+        stage('git checkout') {
+            steps {
+                script {
+                    def Description = getChangeSetMessage()
+                    slackSend(
+                        color: "good",
+                        message: "🚀 ${JOB_NAME} ${BuildType}のビルド開始 v${VERSION} (${SelectBranch})\nDescription:\n${Description}\n${jenkins_url}"
+                    )
+                }
+            }
+        }
+        
+        stage('Parallel Build') {
+            parallel {
+                stage('iOS') {
+                    steps {
+                        build job: 'Build_Binary_iOS', parameters: params
+                    }
+                    post {
+                        success {
+                            script {
+                                slackSend(
+                                    color: "good",
+                                    message: "✅ ${JOB_NAME} iOSビルド完了 #${BUILD_NUMBER}\n${jenkins_url}"
+                                )
+                            }
+                        }
+                        failure {
+                            script {
+                                slackSend(
+                                    color: "danger",
+                                    message: "❌ ${JOB_NAME} iOSビルド失敗 #${BUILD_NUMBER}\n${jenkins_url}"
+                                )
+                            }
+                        }
+                    }
+                }
+
+                stage('Android') {
+                    steps {
+                        build job: 'Build_Binary_Android', parameters: params
+                    }
+                    post {
+                        success {
+                            script {
+                                slackSend(
+                                    color: "good",
+                                    message: "✅ ${JOB_NAME} Androidビルド完了 #${BUILD_NUMBER}\n${jenkins_url}"
+                                )
+                            }
+                        }
+                        failure {
+                            script {
+                                slackSend(
+                                    color: "danger",
+                                    message: "❌ ${JOB_NAME} Androidビルド失敗 #${BUILD_NUMBER}\n${jenkins_url}"
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        failure {
+            slackSend(
+                color: "danger",
+                message: "❗️ ${JOB_NAME} 全体ビルド失敗 #${BUILD_NUMBER}\n${jenkins_url}"
+            )
+        }
+    }
+}

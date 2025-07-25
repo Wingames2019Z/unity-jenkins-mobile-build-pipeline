@@ -1,0 +1,82 @@
+def bundle_name
+def fastlane_command
+def output_dir
+
+// ビルドタイプに応じた設定
+switch(BuildType) {
+    case 'DEVELOP':
+        bundle_name = 'DEV'
+        fastlane_command = 'develop'
+        output_dir = 'com.example.app.develop'
+        break
+
+    case 'STAGING':
+        bundle_name = 'STG'
+        fastlane_command = 'staging'
+        output_dir = 'com.example.app.staging'
+        break
+
+    case 'RELEASE':
+        bundle_name = 'RELEASE'
+        fastlane_command = 'release'
+        output_dir = 'com.example.app'
+        break
+}
+
+node {
+    deleteDir()
+
+    stage('git checkout') {
+        timeout(time: 35, unit: 'MINUTES') {
+            checkout([$class: 'GitSCM',
+                branches: [[name: "${SelectBranch}"]],
+                doGenerateSubmoduleConfigurations: false,
+                extensions: [[$class: 'CloneOption', timeout: 30]],
+                userRemoteConfigs: [
+                    [credentialsId: 'your-ssh-credential-id', url: "git@github.com:your-account-name/your-project.git"]
+                ]
+            ])
+        }
+    }
+
+    stage('Preparation') {
+        // 何か準備処理があるならここに書く
+    }
+
+    stage('Unity Build') {
+        def command = "/Applications/Unity/Hub/Editor/[Unityのバージョン]/Unity.app/Contents/MacOS/Unity"
+        command += " -quit"
+        command += " -buildTarget ios"
+        command += " -batchmode"
+        command += " -projectPath ${WORKSPACE}/JenkinsUnity"
+        command += " -logfile -"
+        command += " -executeMethod BuildClass.Build"
+        command += " proj:${BuildType},target:iOS,version:${VERSION},name:${bundle_name},emlname:${JOB_NAME}_${BUILD_NUMBER},bundleNum:${BUILD_NUMBER}"
+        sh(script: command)
+    }
+
+    stage('Xcode Build') {
+        dir("Builds/${output_dir}") { if (fileExists('Podfile')) {
+            withEnv(["PATH=/opt/homebrew/bin:$PATH"]) {
+                sh "pod install"
+            }
+        } else {
+            echo "Podfile not found. Skipping pod install."
+        }
+        }
+
+        dir('Tools') {
+            withEnv([
+                "PATH=/opt/homebrew/bin:$PATH",
+                 "LANG=en_US.UTF-8",
+                "DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer"
+            ]) {
+                sh "fastlane ios ${fastlane_command}"
+            }
+        }
+    }
+
+    stage('Result') {
+        archiveArtifacts allowEmptyArchive: true, artifacts: 'Builds/*.ipa', onlyIfSuccessful: true
+    }
+}

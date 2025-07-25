@@ -1,0 +1,86 @@
+node {
+    def bundle_name = ''
+    def extention = ''
+    // ビルドタイプに応じた出力名の設定
+    switch (BuildType) {
+        case 'DEVELOP':
+            extention = '.aab'
+            bundle_name = 'DEV'
+            break
+        case 'STAGING':
+            extention = '.aab'
+            bundle_name = 'STG'
+            break
+        case 'RELEASE':
+            extention = '.aab'
+            bundle_name = 'Default App'
+            break
+    }
+    def androidHome = '/Applications/Unity/Hub/Editor/[Unityのバージョン]/PlaybackEngines/AndroidPlayer/SDK'
+    def javaHome = '/Applications/Unity/Hub/Editor/[Unityのバージョン]/PlaybackEngines/AndroidPlayer/OpenJDK'
+    def unityPath = '/Applications/Unity/Hub/Editor/[Unityのバージョン]/Unity.app/Contents/MacOS/Unity'
+    def cmdlineToolsPath = "${androidHome}/cmdline-tools/latest/bin"
+    def newPath = "${cmdlineToolsPath}:${javaHome}/bin:${env.PATH}"
+
+    stage('git checkout') {
+        checkout([$class: 'GitSCM',
+            branches: [[name: "${SelectBranch}"]],
+            doGenerateSubmoduleConfigurations: false,
+            userRemoteConfigs: [[
+                credentialsId: 'your-ssh-credential-id', // GitHubのSSH認証用ID
+                url: "git@github.com:your-account-name/your-unity-project.git" // リポジトリ名
+            ]]
+        ])
+    }
+
+    stage('Preparation') {
+        withEnv([
+            "ANDROID_HOME=${androidHome}",
+            "JAVA_HOME=${javaHome}",
+            "UNITY_PATH=${unityPath}",
+            "CMDLINE_TOOLS_PATH=${cmdlineToolsPath}",
+            "PATH=${newPath}"
+        ]) {
+            // Android SDKライセンスに自動同意
+            sh """
+            cd "$CMDLINE_TOOLS_PATH" || exit 1
+            yes | ./sdkmanager --licenses
+            """
+        }
+    }
+
+
+    stage('Unity Build') {
+    withEnv([
+        "ANDROID_HOME=${androidHome}",
+        "JAVA_HOME=${javaHome}",
+        "UNITY_PATH=${unityPath}",
+        "PATH=${newPath}"
+    ]) {
+        sh "rm -rf Builds/*"
+        sh "mkdir -p Builds/log"
+
+        def args = "proj:${BuildType},target:Android,version:${VERSION},name:${bundle_name},emlname:${JOB_NAME}_${BUILD_NUMBER},bundleNum:${BUILD_NUMBER}"
+        def quotedArgs = "\"${args}\""
+        
+        // UnityコマンドによるAndroidビルド実行
+        def command = """
+        "${unityPath}" \
+        -quit \
+        -buildTarget android \
+        -batchmode \
+        -stackTraceLogType Full \
+        -projectPath "${WORKSPACE}"/JenkinsUnity \
+        -logfile "${WORKSPACE}/Builds/log/output_build.log" \
+        -executeMethod BuildClass.Build\
+        ${quotedArgs}
+        """
+        sh command.stripIndent().trim()
+    }
+}
+
+    stage('Result') {
+        // 成功時に .aab を成果物として保存
+        archiveArtifacts allowEmptyArchive: true, artifacts: "Builds/*${extention}", onlyIfSuccessful: true
+    }
+}
